@@ -16,28 +16,34 @@ public class AppDbContext : DbContext
     public DbSet<ItemVenda> ItensVenda { get; set; } = null!;
     public DbSet<Pagamento> Pagamentos { get; set; } = null!;
 
-    // ✅ PASSO 2: DbSet Keyless para retorno da função
+    // ✅ TABELA NOVA: caixas
+    public DbSet<Caixa> Caixas { get; set; } = null!;
+
+    // ✅ Keyless (retorno da função public.caixa_aberto())
     public DbSet<CaixaAbertoView> CaixaAberto { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
-        modelBuilder.Entity<Cliente>()
-            .HasIndex(c => c.Telefone)
-            .IsUnique();
-
+        // ✅ Tabelas (garantir nomes)
         modelBuilder.Entity<Cliente>().ToTable("clientes");
         modelBuilder.Entity<Produto>().ToTable("produtos");
         modelBuilder.Entity<Venda>().ToTable("vendas");
         modelBuilder.Entity<ItemVenda>().ToTable("itens_venda");
         modelBuilder.Entity<Pagamento>().ToTable("pagamentos");
+        modelBuilder.Entity<Caixa>().ToTable("caixas");
 
-        // ✅ PASSO 2: Configurar o keyless (não é tabela, nem view)
-        modelBuilder.Entity<CaixaAbertoView>(e =>
+        // ✅ Cliente
+        modelBuilder.Entity<Cliente>(e =>
         {
-            e.HasNoKey();
-            e.ToView(null);
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.Nome).HasColumnName("nome");
+            e.Property(x => x.Telefone).HasColumnName("telefone");
+            e.Property(x => x.Cidade).HasColumnName("cidade");
+
+            e.HasIndex(x => x.Telefone).IsUnique();
         });
 
         // ✅ Produto
@@ -72,6 +78,41 @@ public class AppDbContext : DbContext
             e.Property(x => x.ProdutoId).HasColumnName("produto_id");
             e.Property(x => x.Quantidade).HasColumnName("quantidade");
             e.Property(x => x.PrecoUnitario).HasColumnName("preco_unitario");
+        });
+
+        // ✅ Pagamento
+        modelBuilder.Entity<Pagamento>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.VendaId).HasColumnName("venda_id");
+            e.Property(x => x.Forma).HasColumnName("forma");
+            e.Property(x => x.Valor).HasColumnName("valor");
+            e.Property(x => x.DataPagamento).HasColumnName("data_pagamento");
+        });
+
+        // ✅ Caixa (tabela)
+        modelBuilder.Entity<Caixa>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.DataAbertura).HasColumnName("data_abertura");
+            e.Property(x => x.ValorInicial).HasColumnName("valor_inicial");
+            e.Property(x => x.DataFechamento).HasColumnName("data_fechamento");
+            e.Property(x => x.ValorFinal).HasColumnName("valor_final");
+            e.Property(x => x.Aberto).HasColumnName("aberto");
+        });
+
+        // ✅ CaixaAbertoView (keyless - função)
+        modelBuilder.Entity<CaixaAbertoView>(e =>
+        {
+            e.HasNoKey();
+            e.ToView(null);
+
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.DataAbertura).HasColumnName("data_abertura");
+            e.Property(x => x.ValorInicial).HasColumnName("valor_inicial");
+            e.Property(x => x.Aberto).HasColumnName("aberto");
         });
     }
 }
