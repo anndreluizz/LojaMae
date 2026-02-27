@@ -5,8 +5,8 @@ namespace LojaMae.Api.Models;
 [Keyless]
 public class CaixaAbertoView
 {
-    // ⚠️ AJUSTE estes campos para bater com o retorno da função public.caixa_aberto()
-    public int VendaId { get; set; }
-    public decimal Total { get; set; }
+    public int Id { get; set; }
     public DateTime DataAbertura { get; set; }
+    public decimal ValorInicial { get; set; }
+    public bool Aberto { get; set; }
 }
