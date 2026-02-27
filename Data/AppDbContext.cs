@@ -15,8 +15,6 @@ public class AppDbContext : DbContext
     public DbSet<Venda> Vendas { get; set; } = null!;
     public DbSet<ItemVenda> ItensVenda { get; set; } = null!;
     public DbSet<Pagamento> Pagamentos { get; set; } = null!;
-
-    // ✅ TABELA NOVA: caixas
     public DbSet<Caixa> Caixas { get; set; } = null!;
 
     // ✅ Keyless (retorno da função public.caixa_aberto())
@@ -26,7 +24,7 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // ✅ Tabelas (garantir nomes)
+        // ✅ Tabelas
         modelBuilder.Entity<Cliente>().ToTable("clientes");
         modelBuilder.Entity<Produto>().ToTable("produtos");
         modelBuilder.Entity<Venda>().ToTable("vendas");
@@ -62,10 +60,18 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasColumnName("id");
             e.Property(x => x.ClienteId).HasColumnName("cliente_id");
-            e.Property(x => x.DataVenda).HasColumnName("data_venda");
+
+            e.Property(x => x.DataVenda)
+                .HasColumnName("data_venda")
+                .HasColumnType("timestamptz"); // ✅ importante
+
             e.Property(x => x.Total).HasColumnName("total");
             e.Property(x => x.Status).HasColumnName("status");
-            e.Property(x => x.DataFechamento).HasColumnName("data_fechamento");
+
+            e.Property(x => x.DataFechamento)
+                .HasColumnName("data_fechamento")
+                .HasColumnType("timestamptz"); // ✅ importante
+
             e.Property(x => x.Observacao).HasColumnName("observacao");
         });
 
@@ -80,15 +86,29 @@ public class AppDbContext : DbContext
             e.Property(x => x.PrecoUnitario).HasColumnName("preco_unitario");
         });
 
-        // ✅ Pagamento
+        // ✅ Pagamento (CORRIGIDO: adiciona CaixaId + FK)
         modelBuilder.Entity<Pagamento>(e =>
         {
             e.HasKey(x => x.Id);
+
             e.Property(x => x.Id).HasColumnName("id");
             e.Property(x => x.VendaId).HasColumnName("venda_id");
+
+            // 🔥 ESSENCIAL (estava faltando)
+            e.Property(x => x.CaixaId).HasColumnName("caixa_id");
+
             e.Property(x => x.Forma).HasColumnName("forma");
             e.Property(x => x.Valor).HasColumnName("valor");
-            e.Property(x => x.DataPagamento).HasColumnName("data_pagamento");
+
+            e.Property(x => x.DataPagamento)
+                .HasColumnName("data_pagamento")
+                .HasColumnType("timestamptz"); // ✅ importante
+
+            // 🔗 FK Pagamento -> Caixa
+            e.HasOne(x => x.Caixa)
+                .WithMany()
+                .HasForeignKey(x => x.CaixaId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ✅ Caixa (tabela)
@@ -96,22 +116,42 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasColumnName("id");
-            e.Property(x => x.DataAbertura).HasColumnName("data_abertura");
+
+            e.Property(x => x.DataAbertura)
+                .HasColumnName("data_abertura")
+                .HasColumnType("timestamptz"); // ✅ importante
+
             e.Property(x => x.ValorInicial).HasColumnName("valor_inicial");
-            e.Property(x => x.DataFechamento).HasColumnName("data_fechamento");
+
+            e.Property(x => x.DataFechamento)
+                .HasColumnName("data_fechamento")
+                .HasColumnType("timestamptz"); // ✅ importante
+
             e.Property(x => x.ValorFinal).HasColumnName("valor_final");
             e.Property(x => x.Aberto).HasColumnName("aberto");
         });
 
-        // ✅ CaixaAbertoView (keyless - função)
+        // ✅ CaixaAbertoView (keyless - usado pelo FromSqlRaw da função public.caixa_aberto())
         modelBuilder.Entity<CaixaAbertoView>(e =>
         {
             e.HasNoKey();
-            e.ToView(null);
+            e.ToView(null); // não é tabela nem view mapeada, vem de função SQL
 
-            e.Property(x => x.Id).HasColumnName("id");
-            e.Property(x => x.DataAbertura).HasColumnName("data_abertura");
+            // ⚠️ Se sua função retorna "id", troque para .HasColumnName("id")
+            e.Property(x => x.Id).HasColumnName("caixa_id");
+
+            e.Property(x => x.DataAbertura)
+                .HasColumnName("data_abertura")
+                .HasColumnType("timestamptz");
+
+            e.Property(x => x.DataFechamento)
+                .HasColumnName("data_fechamento")
+                .HasColumnType("timestamptz");
+
             e.Property(x => x.ValorInicial).HasColumnName("valor_inicial");
+            e.Property(x => x.TotalPagamentos).HasColumnName("total_pagamentos");
+            e.Property(x => x.SaldoAtual).HasColumnName("saldo_atual");
+
             e.Property(x => x.Aberto).HasColumnName("aberto");
         });
     }

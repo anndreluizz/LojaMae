@@ -22,41 +22,44 @@ public class VendasController : ControllerBase
     // =========================
 
     // GET api/vendas/caixa/hoje
-    [HttpGet("caixa/hoje")]
-    public async Task<IActionResult> CaixaHoje()
+[HttpGet("caixa/hoje")]
+public async Task<IActionResult> CaixaHoje()
+{
+    try
     {
-        try
-        {
-            // View: vw_caixa_total_dia (dia, total_dia)
-            var hoje = await _context.Database
-                .SqlQueryRaw<CaixaHojeDto>(@"
-                    SELECT
-                        dia AS ""Dia"",
-                        total_dia AS ""TotalDia""
-                    FROM public.vw_caixa_total_dia
-                    WHERE dia = CURRENT_DATE
-                    LIMIT 1;
-                ")
-                .FirstOrDefaultAsync();
+        var hoje = await _context.CaixaHojeView
+            .FromSqlRaw("""
+                SELECT dia, total_dia
+                FROM public.vw_caixa_total_dia
+                WHERE dia = CURRENT_DATE
+                LIMIT 1
+            """)
+            .AsNoTracking()
+            .FirstOrDefaultAsync();
 
-            // Se não tiver pagamentos hoje, retorna 0
-            if (hoje == null)
+        if (hoje == null)
+        {
+            return Ok(new CaixaHojeDto
             {
-                return Ok(new CaixaHojeDto
-                {
-                    Dia = DateTime.UtcNow.Date,
-                    TotalDia = 0m
-                });
-            }
-
-            return Ok(hoje);
+                Dia = DateTime.UtcNow.Date,
+                TotalDia = 0m
+            });
         }
-        catch (PostgresException ex)
+
+        return Ok(new CaixaHojeDto
         {
-            return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
-        }
+            Dia = hoje.Dia,
+            TotalDia = hoje.TotalDia
+        });
     }
-
+    catch (PostgresException ex)
+    {
+        return BadRequest(new ErrorResponseDto
+        {
+            Message = ex.MessageText
+        });
+    }
+}
     // GET api/vendas/caixa/diario?dias=7
     [HttpGet("caixa/diario")]
     public async Task<IActionResult> CaixaDiario([FromQuery] int dias = 7)
@@ -67,7 +70,6 @@ public class VendasController : ControllerBase
         try
         {
             // View: vw_caixa_diario (dia, metodo, total_recebido)
-            // aqui eu uso intervalo seguro: últimos X dias incluindo hoje
             var lista = await _context.Database
                 .SqlQueryRaw<CaixaDiarioDto>(@"
                     SELECT
@@ -89,7 +91,7 @@ public class VendasController : ControllerBase
     }
 
     // =========================
-    // SEU CÓDIGO ATUAL
+    // DEBUG
     // =========================
 
     [HttpGet("debug")]
@@ -119,19 +121,42 @@ public class VendasController : ControllerBase
         return Ok(new { db, schema, searchPath, funcoes });
     }
 
-    [HttpPost("abrir")]
-    public async Task<IActionResult> AbrirVenda()
-    {
-        var vendaId = await _context.Database
-            .SqlQueryRaw<int>(@"SELECT public.abrir_venda_api() AS ""Value""")
-            .SingleAsync();
+    // =========================
+    // VENDAS
+    // =========================
 
-        return Ok(new { vendaId });
+    // POST api/vendas/abrir
+    // Body: { "clienteId": 1 }
+    [HttpPost("abrir")]
+    public async Task<IActionResult> AbrirVenda([FromBody] AbrirVendaDto dto)
+    {
+        if (dto == null || dto.ClienteId <= 0)
+            return BadRequest(new ErrorResponseDto { Message = "Informe um clienteId válido." });
+
+        try
+        {
+            var vendaId = await _context.Database
+                .SqlQueryRaw<int>(
+                    @"SELECT public.abrir_venda_api({0}) AS ""Value""",
+                    dto.ClienteId
+                )
+                .SingleAsync();
+
+            return Ok(new { vendaId });
+        }
+        catch (PostgresException ex)
+        {
+            return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
     }
 
+    // POST api/vendas/{vendaId}/itens
     [HttpPost("{vendaId:int}/itens")]
     public async Task<IActionResult> AdicionarItem(int vendaId, [FromBody] VendaItemCreateDto dto)
     {
+        if (dto == null || dto.ProdutoId <= 0 || dto.Quantidade <= 0)
+            return BadRequest(new ErrorResponseDto { Message = "ProdutoId e Quantidade devem ser válidos." });
+
         try
         {
             await _context.Database.ExecuteSqlRawAsync(
@@ -149,6 +174,7 @@ public class VendasController : ControllerBase
         }
     }
 
+    // GET api/vendas/{id}
     [HttpGet("{id:int}")]
     public async Task<IActionResult> ObterVenda(int id)
     {
@@ -193,6 +219,7 @@ public class VendasController : ControllerBase
         return Ok(venda);
     }
 
+    // POST api/vendas/{id}/fechar
     [HttpPost("{id:int}/fechar")]
     public async Task<IActionResult> FecharVenda(int id)
     {
@@ -211,6 +238,7 @@ public class VendasController : ControllerBase
         }
     }
 
+    // POST api/vendas/{id}/pagar
     [HttpPost("{id:int}/pagar")]
     public async Task<IActionResult> Pagar(int id, [FromBody] PagamentoCreateDto dto)
     {
@@ -223,7 +251,7 @@ public class VendasController : ControllerBase
                 "SELECT public.registrar_pagamento_venda({0}, {1}, {2});",
                 id,
                 dto.Valor,
-                dto.FormaPagamento
+                dto.Forma
             );
 
             return Ok(new { message = "Pagamento registrado com sucesso" });
