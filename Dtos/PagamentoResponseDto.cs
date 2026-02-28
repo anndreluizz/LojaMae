@@ -4,8 +4,8 @@ public class PagamentoResponseDto
 {
     public int Id { get; set; }
     public int VendaId { get; set; }
-    public int CaixaId { get; set; }          // ✅ precisa existir
+    public int CaixaId { get; set; }
     public string Forma { get; set; } = string.Empty;
     public decimal Valor { get; set; }
-    public DateTime DataPagamento { get; set; } // ✅ precisa existir
+    public DateTime DataPagamento { get; set; }
 }

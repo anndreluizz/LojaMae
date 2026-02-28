@@ -3,6 +3,8 @@ using LojaMae.Api.Dtos;
 using LojaMae.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using System.Data;
 
 namespace LojaMae.Api.Controllers;
 
@@ -20,38 +22,39 @@ public class CaixaController : ControllerBase
     // =========================================
     // GET - CAIXA ABERTO (saldo automático via VIEW vw_caixa_saldo)
     // =========================================
-[HttpGet("aberto")]
-public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
-{
-    var caixa = await _context.Database
-        .SqlQueryRaw<CaixaAbertoView>(@"
-            SELECT
-              caixa_id        AS ""Id"",
-              data_abertura   AS ""DataAbertura"",
-              data_fechamento AS ""DataFechamento"",
-              valor_inicial   AS ""ValorInicial"",
-              total_pagamentos AS ""TotalPagamentos"",
-              saldo_atual     AS ""SaldoAtual"",
-              (data_fechamento IS NULL) AS ""Aberto""
-            FROM public.vw_caixa_saldo
-            WHERE data_fechamento IS NULL
-            ORDER BY caixa_id DESC
-            LIMIT 1
-        ")
-        .AsNoTracking()
-        .FirstOrDefaultAsync();
-
-    if (caixa == null)
-        return NotFound(new ErrorResponseDto { Message = "Nenhum caixa aberto." });
-
-    return Ok(new CaixaResponseDto
+    [HttpGet("aberto")]
+    public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
     {
-        Id = caixa.Id,
-        Status = caixa.Aberto ? "ABERTO" : "FECHADO",
-        ValorInicial = caixa.ValorInicial,
-        SaldoCaixa = caixa.SaldoAtual
-    });
-}
+        var caixa = await _context.Database
+            .SqlQueryRaw<CaixaAbertoView>(@"
+                SELECT
+                  caixa_id         AS ""Id"",
+                  data_abertura    AS ""DataAbertura"",
+                  data_fechamento  AS ""DataFechamento"",
+                  valor_inicial    AS ""ValorInicial"",
+                  total_pagamentos AS ""TotalPagamentos"",
+                  saldo_atual      AS ""SaldoAtual"",
+                  (data_fechamento IS NULL) AS ""Aberto""
+                FROM public.vw_caixa_saldo
+                WHERE data_fechamento IS NULL
+                ORDER BY caixa_id DESC
+                LIMIT 1
+            ")
+            .AsNoTracking()
+            .FirstOrDefaultAsync();
+
+        if (caixa == null)
+            return NotFound(new ErrorResponseDto { Message = "Nenhum caixa aberto." });
+
+        return Ok(new CaixaResponseDto
+        {
+            Id = caixa.Id,
+            Status = caixa.Aberto ? "ABERTO" : "FECHADO",
+            ValorInicial = caixa.ValorInicial,
+            SaldoCaixa = caixa.SaldoAtual
+        });
+    }
+
     // =========================================
     // POST - ABRIR CAIXA
     // =========================================
@@ -67,7 +70,7 @@ public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
 
         var caixa = new Caixa
         {
-            DataAbertura = DateTime.UtcNow, // timestamptz
+            DataAbertura = DateTime.UtcNow,
             ValorInicial = dto.ValorInicial,
             Aberto = true,
             DataFechamento = null,
@@ -87,7 +90,7 @@ public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
     }
 
     // =========================================
-    // POST - FECHAR CAIXA (salva ValorFinal automaticamente = saldo_atual)
+    // POST - FECHAR CAIXA (corrigido)
     // =========================================
     [HttpPost("fechar")]
     public async Task<IActionResult> FecharCaixa([FromBody] CaixaFecharDto dto)
@@ -101,35 +104,62 @@ public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
         if (caixaDb == null)
             return NotFound(new ErrorResponseDto { Message = "Nenhum caixa aberto para fechar." });
 
-        // pega o saldo atual calculado pela VIEW
-        var saldoView = await _context.CaixaAberto
-            .FromSqlRaw(@"
-                SELECT
-                  caixa_id        AS ""Id"",
-                  data_abertura   AS ""DataAbertura"",
-                  data_fechamento AS ""DataFechamento"",
-                  valor_inicial   AS ""ValorInicial"",
-                  total_pagamentos AS ""TotalPagamentos"",
-                  saldo_atual     AS ""SaldoAtual"",
-                  (data_fechamento IS NULL) AS ""Aberto""
-                FROM public.vw_caixa_saldo
-                WHERE caixa_id = {0}
-                LIMIT 1;
-            ", caixaDb.Id)
-            .AsNoTracking()
-            .FirstOrDefaultAsync();
+        // Usa a conexão do EF (não cria outra, evita erro de senha)
+        var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        CaixaAbertoView? saldoView = null;
+
+        // ✅ bloco garante que reader/command fecham antes do SaveChanges
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT
+              caixa_id,
+              data_abertura,
+              data_fechamento,
+              valor_inicial,
+              total_pagamentos,
+              saldo_atual,
+              (data_fechamento IS NULL) AS aberto
+            FROM public.vw_caixa_saldo
+            WHERE caixa_id = @caixaId
+            ORDER BY caixa_id DESC
+            LIMIT 1
+        ", conn))
+        {
+            cmd.Parameters.AddWithValue("@caixaId", caixaDb.Id);
+
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    saldoView = new CaixaAbertoView
+                    {
+                        Id = reader.GetInt32(reader.GetOrdinal("caixa_id")),
+                        DataAbertura = reader.GetDateTime(reader.GetOrdinal("data_abertura")),
+                        DataFechamento = reader.IsDBNull(reader.GetOrdinal("data_fechamento"))
+                            ? null
+                            : reader.GetDateTime(reader.GetOrdinal("data_fechamento")),
+                        ValorInicial = reader.GetDecimal(reader.GetOrdinal("valor_inicial")),
+                        TotalPagamentos = reader.GetDecimal(reader.GetOrdinal("total_pagamentos")),
+                        SaldoAtual = reader.GetDecimal(reader.GetOrdinal("saldo_atual")),
+                        Aberto = reader.GetBoolean(reader.GetOrdinal("aberto"))
+                    };
+                }
+            }
+        }
 
         if (saldoView == null)
             return StatusCode(500, new ErrorResponseDto { Message = "Não foi possível calcular o saldo do caixa." });
 
-        // regra: se vier ValorFinal no DTO, usa ele; senão usa saldo_atual calculado
+        // se vier ValorFinal, usa ele; se não, usa saldo_atual calculado
         var valorFinal = dto.ValorFinal ?? saldoView.SaldoAtual;
 
         if (valorFinal < 0)
             return BadRequest(new ErrorResponseDto { Message = "Valor final não pode ser negativo." });
 
         caixaDb.ValorFinal = valorFinal;
-        caixaDb.DataFechamento = DateTime.UtcNow; // timestamptz
+        caixaDb.DataFechamento = DateTime.UtcNow;
         caixaDb.Aberto = false;
 
         await _context.SaveChangesAsync();
@@ -142,7 +172,8 @@ public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
             caixaDb.DataFechamento,
             caixaDb.ValorInicial,
             caixaDb.ValorFinal,
-            TotalPagamentos = saldoView.TotalPagamentos
+            TotalPagamentos = saldoView.TotalPagamentos,
+            SaldoAtual = saldoView.SaldoAtual
         });
     }
 }

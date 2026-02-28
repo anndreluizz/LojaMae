@@ -22,44 +22,61 @@ public class VendasController : ControllerBase
     // =========================
 
     // GET api/vendas/caixa/hoje
-[HttpGet("caixa/hoje")]
-public async Task<IActionResult> CaixaHoje()
-{
-    try
+    [HttpGet("caixa/hoje")]
+    public async Task<IActionResult> CaixaHoje()
     {
-        var hoje = await _context.CaixaHojeView
-            .FromSqlRaw("""
-                SELECT dia, total_dia
-                FROM public.vw_caixa_total_dia
-                WHERE dia = CURRENT_DATE
-                LIMIT 1
-            """)
-            .AsNoTracking()
-            .FirstOrDefaultAsync();
-
-        if (hoje == null)
+        try
         {
+            await using var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open)
+                await conn.OpenAsync();
+
+            var sql = "SELECT dia, total_dia FROM public.vw_caixa_total_dia WHERE dia = CURRENT_DATE LIMIT 1;";
+
+            // 🔍 Logs pra provar qual código está rodando e se existe "\" na string
+            Console.WriteLine("=== CAIXA HOJE (NPGSQL DIRETO) ✅ ===");
+            Console.WriteLine("SQL => " + sql);
+            Console.WriteLine("TEM BARRA? => " + (sql.Contains('\\') ? "SIM (BUG!)" : "NAO"));
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                return Ok(new CaixaHojeDto
+                {
+                    Dia = DateTime.UtcNow.Date,
+                    TotalDia = 0m
+                });
+            }
+
+            // dia é DATE no Postgres -> DateTime (00:00)
+            var dia = reader.GetDateTime(0);
+            var total = reader.GetDecimal(1);
+
             return Ok(new CaixaHojeDto
             {
-                Dia = DateTime.UtcNow.Date,
-                TotalDia = 0m
+                Dia = dia,
+                TotalDia = total
             });
         }
+        catch (PostgresException ex)
+        {
+            // 👇 Selo pra você ter certeza que o erro veio deste endpoint/método
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "[CAIXA_HOJE_NPGSQL] " + ex.MessageText
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[CAIXA_HOJE] Erro inesperado: " + ex.Message
+            });
+        }
+    }
 
-        return Ok(new CaixaHojeDto
-        {
-            Dia = hoje.Dia,
-            TotalDia = hoje.TotalDia
-        });
-    }
-    catch (PostgresException ex)
-    {
-        return BadRequest(new ErrorResponseDto
-        {
-            Message = ex.MessageText
-        });
-    }
-}
     // GET api/vendas/caixa/diario?dias=7
     [HttpGet("caixa/diario")]
     public async Task<IActionResult> CaixaDiario([FromQuery] int dias = 7)
@@ -70,16 +87,18 @@ public async Task<IActionResult> CaixaHoje()
         try
         {
             // View: vw_caixa_diario (dia, metodo, total_recebido)
+            // Use string normal concatenada para evitar qualquer escape fantasma
+            var sql =
+                "SELECT " +
+                "  dia AS \"Dia\", " +
+                "  metodo AS \"Metodo\", " +
+                "  total_recebido AS \"TotalRecebido\" " +
+                "FROM public.vw_caixa_diario " +
+                "WHERE dia >= (CURRENT_DATE - ({0} - 1)) " +
+                "ORDER BY dia DESC, metodo;";
+
             var lista = await _context.Database
-                .SqlQueryRaw<CaixaDiarioDto>(@"
-                    SELECT
-                        dia AS ""Dia"",
-                        metodo AS ""Metodo"",
-                        total_recebido AS ""TotalRecebido""
-                    FROM public.vw_caixa_diario
-                    WHERE dia >= (CURRENT_DATE - ({0} - 1))
-                    ORDER BY dia DESC, metodo;
-                ", dias)
+                .SqlQueryRaw<CaixaDiarioDto>(sql, dias)
                 .ToListAsync();
 
             return Ok(lista);
@@ -111,11 +130,11 @@ public async Task<IActionResult> CaixaHoje()
 
         var funcoes = await _context.Database
             .SqlQueryRaw<string>(
-                @"SELECT (n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')') AS ""Value""
-                  FROM pg_proc p
-                  JOIN pg_namespace n ON n.oid = p.pronamespace
-                  WHERE p.proname ILIKE 'abrir_venda%'
-                  ORDER BY 1;")
+                "SELECT (n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')') AS \"Value\" " +
+                "FROM pg_proc p " +
+                "JOIN pg_namespace n ON n.oid = p.pronamespace " +
+                "WHERE p.proname ILIKE 'abrir_venda%' " +
+                "ORDER BY 1;")
             .ToListAsync();
 
         return Ok(new { db, schema, searchPath, funcoes });
@@ -137,7 +156,7 @@ public async Task<IActionResult> CaixaHoje()
         {
             var vendaId = await _context.Database
                 .SqlQueryRaw<int>(
-                    @"SELECT public.abrir_venda_api({0}) AS ""Value""",
+                    "SELECT public.abrir_venda_api({0}) AS \"Value\"",
                     dto.ClienteId
                 )
                 .SingleAsync();
