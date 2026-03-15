@@ -1,13 +1,12 @@
-using LojaMae.Api.Data;
-using LojaMae.Api.Dtos;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using LojaMae.Api.Data;
+using LojaMae.Api.Dtos;
 
 namespace LojaMae.Api.Controllers;
 
 [ApiController]
-[Route("api/dashboard")]
+[Route("api/[controller]")]
 public class DashboardController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -17,74 +16,54 @@ public class DashboardController : ControllerBase
         _context = context;
     }
 
-    // GET api/dashboard/resumo
     [HttpGet("resumo")]
-    public async Task<IActionResult> Resumo()
+    public async Task<IActionResult> ObterResumo()
     {
-        var caixaAberto = await _context.CaixaAberto
-            .FromSqlRaw(@"SELECT * FROM public.caixa_aberto()")
-            .AsNoTracking()
-            .FirstOrDefaultAsync();
-
-        var hoje = await _context.CaixaHojeView
-            .FromSqlRaw(@"
-                SELECT dia, total_dia
-                FROM vw_caixa_total_dia
-                WHERE dia = CURRENT_DATE
-                LIMIT 1
-            ")
-            .AsNoTracking()
-            .FirstOrDefaultAsync();
-
-        var dto = new DashboardResumoDto
+        try
         {
-            CaixaAberto = caixaAberto is not null,
-            Dia = DateOnly.FromDateTime(DateTime.UtcNow),
-            TotalRecebidoHoje = hoje?.TotalDia ?? 0m
-        };
+            // 1) Faturamento Total e Qtd Vendas (Apenas vendas fechadas) usando a coluna Total (já com desconto)
+            var vendasFechadas = await _context.Vendas
+                .Where(v => v.Status == "Fechada")
+                .ToListAsync();
 
-        return Ok(dto);
-    }
+            var faturamento = vendasFechadas.Sum(v => v.Total);
+            var totalVendas = vendasFechadas.Count;
 
-    // GET api/dashboard/formas-hoje
-    [HttpGet("formas-hoje")]
-    public async Task<IActionResult> FormasHoje()
-    {
-        var dados = await _context.Database
-            .SqlQueryRaw<DashboardFormaPagamentoDto>(@"
-                SELECT 
-                    forma AS ""Forma"",
-                    COALESCE(SUM(valor), 0) AS ""Total""
-                FROM pagamentos
-                WHERE DATE(data_pagamento) = CURRENT_DATE
-                GROUP BY forma
-                ORDER BY forma
-            ")
-            .ToListAsync();
+            // 2) Tentamos obter a distribuição por forma de pagamento a partir da view vw_caixa_diario (se existir)
+            List<DashboardFormaPagamentoDto> pagamentos = new List<DashboardFormaPagamentoDto>();
 
-        return Ok(dados);
-    }
+            try
+            {
+                var sql =
+                    "SELECT metodo AS \"Forma\", SUM(total_recebido)::numeric AS \"Total\" " +
+                    "FROM public.vw_caixa_diario " +
+                    "WHERE dia = CURRENT_DATE " +
+                    "GROUP BY metodo;";
 
-    // ✅ NOVO: GET api/dashboard/diario?dias=7
-    [HttpGet("diario")]
-    public async Task<IActionResult> Diario([FromQuery] int dias = 7)
-    {
-        if (dias < 1) dias = 1;
-        if (dias > 365) dias = 365;
+                pagamentos = await _context.Database
+                    .SqlQueryRaw<DashboardFormaPagamentoDto>(sql)
+                    .ToListAsync();
+            }
+            catch
+            {
+                // Se a view não existir ou ocorrer erro, deixamos a lista vazia (ou poderia preencher zeros)
+            }
 
-        var param = new NpgsqlParameter("dias", dias);
+            var resumo = new DashboardResumoDto
+            {
+                FaturamentoTotal = faturamento,
+                TotalVendas = totalVendas,
+                Pagamentos = pagamentos
+            };
 
-        var dados = await _context.CaixaHojeView
-            .FromSqlRaw(@"
-                SELECT dia, total_dia
-                FROM vw_caixa_total_dia
-                WHERE dia >= (CURRENT_DATE - (@dias * INTERVAL '1 day'))
-                ORDER BY dia
-            ", param)
-            .AsNoTracking()
-            .ToListAsync();
-
-        // Retorna no formato da view mesmo: [{ dia, totalDia }]
-        return Ok(dados);
+            return Ok(resumo);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[DASHBOARD_RESUMO] Erro: " + ex.Message
+            });
+        }
     }
 }

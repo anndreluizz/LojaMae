@@ -70,6 +70,13 @@ public class AppDbContext : DbContext
             e.Property(x => x.Nome).HasColumnName("nome");
             e.Property(x => x.Preco).HasColumnName("preco");
             e.Property(x => x.Estoque).HasColumnName("estoque");
+
+            e.Property(x => x.DataCadastro)
+                .HasColumnName("DataCadastro")
+                .HasColumnType("timestamptz");
+
+            e.Property(x => x.CodigoBarras)
+                .HasColumnName("CodigoBarras");
         });
 
         // =========================

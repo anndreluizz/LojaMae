@@ -18,7 +18,7 @@ public class VendasController : ControllerBase
     }
 
     // =========================
-    // CAIXA (PASSO 3)
+    // CAIXA
     // =========================
 
     // GET api/vendas/caixa/hoje
@@ -27,45 +27,15 @@ public class VendasController : ControllerBase
     {
         try
         {
-            await using var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
-            if (conn.State != System.Data.ConnectionState.Open)
-                await conn.OpenAsync();
-
-            var sql = "SELECT dia, total_dia FROM public.vw_caixa_total_dia WHERE dia = CURRENT_DATE LIMIT 1;";
-
-            // 🔍 Logs pra provar qual código está rodando e se existe "\" na string
-            Console.WriteLine("=== CAIXA HOJE (NPGSQL DIRETO) ✅ ===");
-            Console.WriteLine("SQL => " + sql);
-            Console.WriteLine("TEM BARRA? => " + (sql.Contains('\\') ? "SIM (BUG!)" : "NAO"));
-
-            await using var cmd = new NpgsqlCommand(sql, conn);
-            await using var reader = await cmd.ExecuteReaderAsync();
-
-            if (!await reader.ReadAsync())
-            {
-                return Ok(new CaixaHojeDto
-                {
-                    Dia = DateTime.UtcNow.Date,
-                    TotalDia = 0m
-                });
-            }
-
-            // dia é DATE no Postgres -> DateTime (00:00)
-            var dia = reader.GetDateTime(0);
-            var total = reader.GetDecimal(1);
+            var hoje = DateTime.UtcNow.Date;
+            var total = await _context.Vendas
+                .Where(v => v.Status == "Fechada" && v.DataVenda.Date == hoje)
+                .SumAsync(v => (decimal?)v.Total) ?? 0m;
 
             return Ok(new CaixaHojeDto
             {
-                Dia = dia,
+                Dia = hoje,
                 TotalDia = total
-            });
-        }
-        catch (PostgresException ex)
-        {
-            // 👇 Selo pra você ter certeza que o erro veio deste endpoint/método
-            return BadRequest(new ErrorResponseDto
-            {
-                Message = "[CAIXA_HOJE_NPGSQL] " + ex.MessageText
             });
         }
         catch (Exception ex)
@@ -86,8 +56,6 @@ public class VendasController : ControllerBase
 
         try
         {
-            // View: vw_caixa_diario (dia, metodo, total_recebido)
-            // Use string normal concatenada para evitar qualquer escape fantasma
             var sql =
                 "SELECT " +
                 "  dia AS \"Dia\", " +
@@ -109,10 +77,98 @@ public class VendasController : ControllerBase
         }
     }
 
+    // ✅ GET api/vendas/ultimos-dias?dias=7
+    [HttpGet("ultimos-dias")]
+    public async Task<IActionResult> VendasUltimosDias([FromQuery] int dias = 7)
+    {
+        if (dias <= 0) dias = 7;
+        if (dias > 365) dias = 365;
+
+        try
+        {
+            var sql =
+                "SELECT " +
+                "  dia AS \"Dia\", " +
+                "  SUM(total_recebido) AS \"Total\" " +
+                "FROM public.vw_caixa_diario " +
+                "WHERE dia >= (CURRENT_DATE - ({0} - 1)) " +
+                "GROUP BY dia " +
+                "ORDER BY dia;";
+
+            var lista = await _context.Database
+                .SqlQueryRaw<VendasUltimosDiasDto>(sql, dias)
+                .ToListAsync();
+
+            return Ok(lista);
+        }
+        catch (PostgresException ex)
+        {
+            return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[ULTIMOS_DIAS] Erro: " + ex.Message
+            });
+        }
+    }
+
+    // =========================
+    // ✅ DESCONTO
+    // =========================
+
+    // POST api/vendas/{id}/desconto
+    // Body: { "desconto": 5.00 }
+    [HttpPost("{id:int}/desconto")]
+    public async Task<IActionResult> AplicarDesconto(int id, [FromBody] DescontoDto dto)
+    {
+        if (dto == null || dto.Desconto < 0)
+            return BadRequest(new ErrorResponseDto { Message = "Informe um desconto válido (>= 0)." });
+
+        try
+        {
+            // 1) Calcula o subtotal da venda a partir dos itens já adicionados
+            var subtotal = await _context.ItensVenda
+                .Where(i => i.VendaId == id)
+                .Select(i => i.PrecoUnitario * i.Quantidade)
+                .SumAsync();
+
+            // 2) Recupera a venda e atualiza desconto + total (total = subtotal - desconto)
+            var venda = await _context.Vendas.FindAsync(id);
+            if (venda == null)
+                return NotFound(new ErrorResponseDto { Message = "Venda não encontrada" });
+
+            venda.Desconto = dto.Desconto;
+            var novoTotal = subtotal - dto.Desconto;
+            if (novoTotal < 0) novoTotal = 0m;
+            venda.Total = novoTotal;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Desconto aplicado com sucesso",
+                vendaId = venda.Id,
+                total = venda.Total,
+                desconto = venda.Desconto
+            });
+        }
+        catch (PostgresException ex)
+        {
+            return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto { Message = "[DESCONTO] Erro: " + ex.Message });
+        }
+    }
+
     // =========================
     // DEBUG
     // =========================
 
+    // GET api/vendas/debug
     [HttpGet("debug")]
     public async Task<IActionResult> DebugBanco()
     {
@@ -143,6 +199,38 @@ public class VendasController : ControllerBase
     // =========================
     // VENDAS
     // =========================
+
+    // ✅ GET api/vendas  (Histórico)
+    [HttpGet]
+    public async Task<IActionResult> ListarVendas()
+    {
+        try
+        {
+            var vendas = await _context.Vendas
+                .OrderByDescending(v => v.Id)
+                .Select(v => new VendaListaDto
+                {
+                    Id = v.Id,
+                    DataVenda = v.DataVenda,
+                    Total = v.Total,
+                    Status = v.Status,
+                    ClienteNome = _context.Clientes
+                        .Where(c => c.Id == v.ClienteId)
+                        .Select(c => c.Nome)
+                        .FirstOrDefault()
+                })
+                .ToListAsync();
+
+            return Ok(vendas);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[LISTAR_VENDAS] Erro: " + ex.Message
+            });
+        }
+    }
 
     // POST api/vendas/abrir
     // Body: { "clienteId": 1 }
@@ -280,20 +368,4 @@ public class VendasController : ControllerBase
             return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
         }
     }
-}
-
-// =========================
-// DTOs DO CAIXA (PASSO 3)
-// =========================
-public class CaixaHojeDto
-{
-    public DateTime Dia { get; set; }
-    public decimal TotalDia { get; set; }
-}
-
-public class CaixaDiarioDto
-{
-    public DateTime Dia { get; set; }
-    public string Metodo { get; set; } = string.Empty;
-    public decimal TotalRecebido { get; set; }
 }

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'caixa_page.dart';
+import 'pages/login_page.dart';
 
 void main() {
   runApp(const LojaMaeApp());
@@ -13,8 +13,11 @@ class LojaMaeApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LojaMae',
-      theme: ThemeData(useMaterial3: true),
-      home: const CaixaPage(),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+      ),
+      home: const LoginPage(), // ✅ Sistema começa pelo Login agora
     );
   }
 }

@@ -2734,19 +2734,19 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\alvar\\.nuget\\packages\\": {}
+    "C:\\Users\\maria\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\alvar\\LojaMae\\LojaMae.Api.csproj",
+      "projectUniqueName": "C:\\Users\\maria\\lojamae\\LojaMae.Api.csproj",
       "projectName": "LojaMae.Api",
-      "projectPath": "C:\\Users\\alvar\\LojaMae\\LojaMae.Api.csproj",
-      "packagesPath": "C:\\Users\\alvar\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\alvar\\LojaMae\\obj\\",
+      "projectPath": "C:\\Users\\maria\\lojamae\\LojaMae.Api.csproj",
+      "packagesPath": "C:\\Users\\maria\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\maria\\lojamae\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\alvar\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\maria\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"

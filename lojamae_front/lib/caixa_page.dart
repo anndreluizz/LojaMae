@@ -1,6 +1,7 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'widgets/menu_lateral.dart';
 
 class CaixaPage extends StatefulWidget {
   const CaixaPage({super.key});
@@ -10,116 +11,82 @@ class CaixaPage extends StatefulWidget {
 }
 
 class _CaixaPageState extends State<CaixaPage> {
-  // ✅ URL HTTP da sua API (igual no dotnet run)
-final String baseUrl = "http://127.0.0.1:5812";
-
-  bool loading = false;
-  String? error;
   Map<String, dynamic>? caixa;
-
-  Future<void> carregar() async {
-    setState(() {
-      loading = true;
-      error = null;
-    });
-
-    try {
-      final res = await http.get(Uri.parse("$baseUrl/api/caixa/aberto"));
-
-      if (res.statusCode == 200) {
-        setState(() => caixa = jsonDecode(res.body) as Map<String, dynamic>);
-      } else if (res.statusCode == 404) {
-        setState(() => caixa = null);
-      } else {
-        setState(() => error = "Status ${res.statusCode}: ${res.body}");
-      }
-    } catch (e) {
-      setState(() => error = "Falha: $e");
-    } finally {
-      setState(() => loading = false);
-    }
-  }
+  bool carregando = true;
+  final String baseUrl = "http://127.0.0.1:5012/api/caixa/aberto";
 
   @override
   void initState() {
     super.initState();
-    carregar();
+    buscarStatusCaixa();
   }
 
-  String v(String key) => (caixa?[key] ?? "-").toString();
+  Future<void> buscarStatusCaixa() async {
+    setState(() => carregando = true);
+    try {
+      final response = await http.get(Uri.parse(baseUrl));
+      if (response.statusCode == 200) {
+        setState(() {
+          caixa = json.decode(response.body);
+          carregando = false;
+        });
+      } else {
+        setState(() {
+          caixa = null;
+          carregando = false;
+        });
+      }
+    } catch (e) {
+      setState(() => carregando = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final temCaixa = caixa != null;
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text("LojaMae - Caixa (Dev)"),
+        title: const Text('LojaMae - Caixa (Dev)'),
         actions: [
-          IconButton(
-            onPressed: loading ? null : carregar,
-            icon: const Icon(Icons.refresh),
-          )
+          IconButton(onPressed: buscarStatusCaixa, icon: const Icon(Icons.refresh))
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (error != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      color: Colors.red.withOpacity(0.15),
-                      child: Text(
-                        error!,
-                        style: const TextStyle(color: Colors.red),
+      drawer: const MenuLateral(), // <-- ISSO FAZ O MENU APARECER
+      body: carregando
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: caixa == null
+                  ? const Card(
+                      child: ListTile(
+                        leading: Icon(Icons.error, color: Colors.red),
+                        title: Text('Nenhum caixa aberto'),
+                        subtitle: Text('Abra um caixa no backend ou implemente o botão depois.'),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: temCaixa
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                    )
+                  : Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
                               children: [
-                                const Text(
-                                  "✅ Caixa ABERTO",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text("Id: ${v("id")}"),
-                                Text("Status: ${v("status")}"),
-                                Text("Valor inicial: ${v("valorInicial")}"),
-                                Text("Saldo caixa: ${v("saldoCaixa")}"),
-                              ],
-                            )
-                          : const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "❌ Nenhum caixa aberto",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                SizedBox(height: 8),
-                                Text("Abra um caixa no backend ou implemente botão depois."),
+                                Icon(Icons.check_box, color: Colors.green),
+                                SizedBox(width: 10),
+                                Text('Caixa ABERTO', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                               ],
                             ),
+                            const Divider(),
+                            Text('Id: ${caixa!['id']}'),
+                            Text('Status: ${caixa!['status']}'),
+                            Text('Valor inicial: ${caixa!['valorInicial']}'),
+                            Text('Saldo caixa: ${caixa!['saldoCaixa']}'),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-      ),
+            ),
     );
   }
 }
