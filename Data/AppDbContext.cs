@@ -11,7 +11,7 @@ public class AppDbContext : DbContext
     }
 
     // =========================
-    // TABELAS (EF)
+    // TABELAS
     // =========================
     public DbSet<Cliente> Clientes { get; set; } = null!;
     public DbSet<Produto> Produtos { get; set; } = null!;
@@ -21,13 +21,9 @@ public class AppDbContext : DbContext
     public DbSet<Caixa> Caixas { get; set; } = null!;
 
     // =========================
-    // KEYLESS (VIEW / FUNÇÃO)
+    // VIEWS / FUNÇÕES
     // =========================
-
-    // ✅ retorno da função public.caixa_aberto()
     public DbSet<CaixaAbertoView> CaixaAberto { get; set; } = null!;
-
-    // ✅ retorno da view public.vw_caixa_total_dia
     public DbSet<CaixaHojeView> CaixaHojeView { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -35,7 +31,7 @@ public class AppDbContext : DbContext
         base.OnModelCreating(modelBuilder);
 
         // =========================
-        // MAPEAMENTO DE TABELAS
+        // TABELAS
         // =========================
         modelBuilder.Entity<Cliente>().ToTable("clientes");
         modelBuilder.Entity<Produto>().ToTable("produtos");
@@ -72,11 +68,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.Estoque).HasColumnName("estoque");
 
             e.Property(x => x.DataCadastro)
-                .HasColumnName("DataCadastro")
+                .HasColumnName("data_cadastro")
                 .HasColumnType("timestamptz");
 
             e.Property(x => x.CodigoBarras)
-                .HasColumnName("CodigoBarras");
+                .HasColumnName("codigo_barras");
         });
 
         // =========================
@@ -88,11 +84,14 @@ public class AppDbContext : DbContext
 
             e.Property(x => x.Id).HasColumnName("id");
             e.Property(x => x.ClienteId).HasColumnName("cliente_id");
+            e.Property(x => x.CaixaId).HasColumnName("caixa_id");
 
             e.Property(x => x.DataVenda)
                 .HasColumnName("data_venda")
                 .HasColumnType("timestamptz");
 
+            e.Property(x => x.Subtotal).HasColumnName("subtotal");
+            e.Property(x => x.Desconto).HasColumnName("desconto");
             e.Property(x => x.Total).HasColumnName("total");
             e.Property(x => x.Status).HasColumnName("status");
 
@@ -115,10 +114,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.ProdutoId).HasColumnName("produto_id");
             e.Property(x => x.Quantidade).HasColumnName("quantidade");
             e.Property(x => x.PrecoUnitario).HasColumnName("preco_unitario");
+            e.Property(x => x.Subtotal).HasColumnName("subtotal");
         });
 
         // =========================
-        // PAGAMENTO (com CaixaId + FK)
+        // PAGAMENTO
         // =========================
         modelBuilder.Entity<Pagamento>(e =>
         {
@@ -126,7 +126,6 @@ public class AppDbContext : DbContext
 
             e.Property(x => x.Id).HasColumnName("id");
             e.Property(x => x.VendaId).HasColumnName("venda_id");
-
             e.Property(x => x.CaixaId).HasColumnName("caixa_id");
 
             e.Property(x => x.Forma).HasColumnName("forma");
@@ -143,7 +142,7 @@ public class AppDbContext : DbContext
         });
 
         // =========================
-        // CAIXA (tabela)
+        // CAIXA
         // =========================
         modelBuilder.Entity<Caixa>(e =>
         {
@@ -166,7 +165,7 @@ public class AppDbContext : DbContext
         });
 
         // =========================
-        // KEYLESS: CaixaAbertoView (função SQL)
+        // VIEW FUNÇÃO CAIXA ABERTO
         // =========================
         modelBuilder.Entity<CaixaAbertoView>(e =>
         {
@@ -190,7 +189,7 @@ public class AppDbContext : DbContext
         });
 
         // =========================
-        // KEYLESS: CaixaHojeView (view SQL)
+        // VIEW TOTAL DO DIA
         // =========================
         modelBuilder.Entity<CaixaHojeView>(e =>
         {

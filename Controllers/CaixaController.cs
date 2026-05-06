@@ -20,7 +20,7 @@ public class CaixaController : ControllerBase
     }
 
     // =========================================
-    // GET - CAIXA ABERTO (saldo automático via VIEW vw_caixa_saldo)
+    // GET - CAIXA ABERTO
     // =========================================
     [HttpGet("aberto")]
     public async Task<ActionResult<CaixaResponseDto>> GetCaixaAberto()
@@ -44,15 +44,54 @@ public class CaixaController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (caixa == null)
-            return NotFound(new ErrorResponseDto { Message = "Nenhum caixa aberto." });
+        {
+            return NotFound(new ErrorResponseDto
+            {
+                Message = "Nenhum caixa aberto."
+            });
+        }
 
         return Ok(new CaixaResponseDto
         {
             Id = caixa.Id,
             Status = caixa.Aberto ? "ABERTO" : "FECHADO",
+            DataAbertura = caixa.DataAbertura,
             ValorInicial = caixa.ValorInicial,
+            TotalPagamentos = caixa.TotalPagamentos,
             SaldoCaixa = caixa.SaldoAtual
         });
+    }
+
+    // =========================================
+    // GET - FORMAS DE PAGAMENTO DO CAIXA ABERTO
+    // =========================================
+    [HttpGet("formas-pagamento")]
+    public async Task<ActionResult<IEnumerable<CaixaFormaPagamentoDto>>> GetFormasPagamento()
+    {
+        var caixaAberto = await _context.Caixas
+            .Where(c => c.DataFechamento == null)
+            .OrderByDescending(c => c.DataAbertura)
+            .FirstOrDefaultAsync();
+
+        if (caixaAberto == null)
+        {
+            return NotFound(new ErrorResponseDto
+            {
+                Message = "Nenhum caixa aberto."
+            });
+        }
+
+        var resultado = await _context.Pagamentos
+            .Where(p => p.CaixaId == caixaAberto.Id)
+            .GroupBy(p => p.Forma)
+            .Select(g => new CaixaFormaPagamentoDto
+            {
+                FormaPagamento = g.Key,
+                Total = g.Sum(x => x.Valor)
+            })
+            .ToListAsync();
+
+        return Ok(resultado);
     }
 
     // =========================================
@@ -61,12 +100,32 @@ public class CaixaController : ControllerBase
     [HttpPost("abrir")]
     public async Task<IActionResult> AbrirCaixa([FromBody] CaixaAbrirDto dto)
     {
-        var jaTemAberto = await _context.Caixas.AnyAsync(c => c.Aberto);
+        var jaTemAberto = await _context.Caixas
+            .AnyAsync(c => c.DataFechamento == null);
+
         if (jaTemAberto)
-            return Conflict(new ErrorResponseDto { Message = "Já existe um caixa aberto." });
+        {
+            return Conflict(new ErrorResponseDto
+            {
+                Message = "Já existe um caixa aberto."
+            });
+        }
+
+        if (dto == null)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Dados inválidos."
+            });
+        }
 
         if (dto.ValorInicial < 0)
-            return BadRequest(new ErrorResponseDto { Message = "Valor inicial não pode ser negativo." });
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Valor inicial não pode ser negativo."
+            });
+        }
 
         var caixa = new Caixa
         {
@@ -74,7 +133,8 @@ public class CaixaController : ControllerBase
             ValorInicial = dto.ValorInicial,
             Aberto = true,
             DataFechamento = null,
-            ValorFinal = null
+            ValorFinal = null,
+            Diferenca = null
         };
 
         _context.Caixas.Add(caixa);
@@ -84,34 +144,40 @@ public class CaixaController : ControllerBase
         {
             Id = caixa.Id,
             Status = "ABERTO",
+            DataAbertura = caixa.DataAbertura,
             ValorInicial = caixa.ValorInicial,
+            TotalPagamentos = 0,
             SaldoCaixa = caixa.ValorInicial
         });
     }
 
     // =========================================
-    // POST - FECHAR CAIXA (corrigido)
+    // POST - FECHAR CAIXA
     // =========================================
     [HttpPost("fechar")]
     public async Task<IActionResult> FecharCaixa([FromBody] CaixaFecharDto dto)
     {
-        // pega o caixa aberto mais recente
         var caixaDb = await _context.Caixas
-            .Where(c => c.Aberto)
+            .Where(c => c.DataFechamento == null)
             .OrderByDescending(c => c.DataAbertura)
             .FirstOrDefaultAsync();
 
         if (caixaDb == null)
-            return NotFound(new ErrorResponseDto { Message = "Nenhum caixa aberto para fechar." });
+        {
+            return NotFound(new ErrorResponseDto
+            {
+                Message = "Nenhum caixa aberto para fechar."
+            });
+        }
 
-        // Usa a conexão do EF (não cria outra, evita erro de senha)
         var conn = (NpgsqlConnection)_context.Database.GetDbConnection();
         if (conn.State != ConnectionState.Open)
+        {
             await conn.OpenAsync();
+        }
 
         CaixaAbertoView? saldoView = null;
 
-        // ✅ bloco garante que reader/command fecham antes do SaveChanges
         await using (var cmd = new NpgsqlCommand(@"
             SELECT
               caixa_id,
@@ -150,17 +216,27 @@ public class CaixaController : ControllerBase
         }
 
         if (saldoView == null)
-            return StatusCode(500, new ErrorResponseDto { Message = "Não foi possível calcular o saldo do caixa." });
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "Não foi possível calcular o saldo do caixa."
+            });
+        }
 
-        // se vier ValorFinal, usa ele; se não, usa saldo_atual calculado
-        var valorFinal = dto.ValorFinal ?? saldoView.SaldoAtual;
+        var valorFinal = dto?.ValorFinal ?? saldoView.SaldoAtual;
 
         if (valorFinal < 0)
-            return BadRequest(new ErrorResponseDto { Message = "Valor final não pode ser negativo." });
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Valor final não pode ser negativo."
+            });
+        }
 
         caixaDb.ValorFinal = valorFinal;
         caixaDb.DataFechamento = DateTime.UtcNow;
         caixaDb.Aberto = false;
+        caixaDb.Diferenca = dto?.Diferenca ?? (valorFinal - saldoView.SaldoAtual);
 
         await _context.SaveChangesAsync();
 
@@ -172,6 +248,7 @@ public class CaixaController : ControllerBase
             caixaDb.DataFechamento,
             caixaDb.ValorInicial,
             caixaDb.ValorFinal,
+            caixaDb.Diferenca,
             TotalPagamentos = saldoView.TotalPagamentos,
             SaldoAtual = saldoView.SaldoAtual
         });

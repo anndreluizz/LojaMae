@@ -15,5 +15,8 @@ public class Caixa
     [Precision(18, 2)]
     public decimal? ValorFinal { get; set; }
 
+    [Precision(18, 2)]
+    public decimal? Diferenca { get; set; }
+
     public bool Aberto { get; set; }
 }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'pages/login_page.dart';
 
 void main() {
   runApp(const LojaMaeApp());
@@ -12,12 +11,35 @@ class LojaMaeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'LojaMae',
+      title: 'Loja Mãe',
       theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
-      home: const LoginPage(), // ✅ Sistema começa pelo Login agora
+      home: const HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Loja Mãe'),
+        centerTitle: false,
+      ),
+      body: const Center(
+        child: Text(
+          'Novo Frontend da Loja',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
   }
 }

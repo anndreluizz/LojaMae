@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LojaMae.Api.Data;
 using LojaMae.Api.Dtos;
+using LojaMae.Api.Models;
 using Npgsql;
 
 namespace LojaMae.Api.Controllers;
@@ -28,8 +29,9 @@ public class VendasController : ControllerBase
         try
         {
             var hoje = DateTime.UtcNow.Date;
+
             var total = await _context.Vendas
-                .Where(v => v.Status == "Fechada" && v.DataVenda.Date == hoje)
+                .Where(v => v.Status == "FINALIZADA" && v.DataVenda.Date == hoje)
                 .SumAsync(v => (decimal?)v.Total) ?? 0m;
 
             return Ok(new CaixaHojeDto
@@ -75,9 +77,16 @@ public class VendasController : ControllerBase
         {
             return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
         }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[CAIXA_DIARIO] Erro: " + ex.Message
+            });
+        }
     }
 
-    // ✅ GET api/vendas/ultimos-dias?dias=7
+    // GET api/vendas/ultimos-dias?dias=7
     [HttpGet("ultimos-dias")]
     public async Task<IActionResult> VendasUltimosDias([FromQuery] int dias = 7)
     {
@@ -115,7 +124,7 @@ public class VendasController : ControllerBase
     }
 
     // =========================
-    // ✅ DESCONTO
+    // DESCONTO
     // =========================
 
     // POST api/vendas/{id}/desconto
@@ -124,24 +133,28 @@ public class VendasController : ControllerBase
     public async Task<IActionResult> AplicarDesconto(int id, [FromBody] DescontoDto dto)
     {
         if (dto == null || dto.Desconto < 0)
-            return BadRequest(new ErrorResponseDto { Message = "Informe um desconto válido (>= 0)." });
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Informe um desconto válido (>= 0)."
+            });
 
         try
         {
-            // 1) Calcula o subtotal da venda a partir dos itens já adicionados
-            var subtotal = await _context.ItensVenda
-                .Where(i => i.VendaId == id)
-                .Select(i => i.PrecoUnitario * i.Quantidade)
-                .SumAsync();
-
-            // 2) Recupera a venda e atualiza desconto + total (total = subtotal - desconto)
             var venda = await _context.Vendas.FindAsync(id);
             if (venda == null)
                 return NotFound(new ErrorResponseDto { Message = "Venda não encontrada" });
 
+            var subtotal = await _context.ItensVenda
+                .Where(i => i.VendaId == id)
+                .Select(i => i.Subtotal)
+                .SumAsync();
+
+            venda.Subtotal = subtotal;
             venda.Desconto = dto.Desconto;
+
             var novoTotal = subtotal - dto.Desconto;
             if (novoTotal < 0) novoTotal = 0m;
+
             venda.Total = novoTotal;
 
             await _context.SaveChangesAsync();
@@ -150,8 +163,9 @@ public class VendasController : ControllerBase
             {
                 message = "Desconto aplicado com sucesso",
                 vendaId = venda.Id,
-                total = venda.Total,
-                desconto = venda.Desconto
+                subtotal = venda.Subtotal,
+                desconto = venda.Desconto,
+                total = venda.Total
             });
         }
         catch (PostgresException ex)
@@ -160,7 +174,10 @@ public class VendasController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new ErrorResponseDto { Message = "[DESCONTO] Erro: " + ex.Message });
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[DESCONTO] Erro: " + ex.Message
+            });
         }
     }
 
@@ -190,6 +207,9 @@ public class VendasController : ControllerBase
                 "FROM pg_proc p " +
                 "JOIN pg_namespace n ON n.oid = p.pronamespace " +
                 "WHERE p.proname ILIKE 'abrir_venda%' " +
+                "   OR p.proname ILIKE 'adicionar_item_venda%' " +
+                "   OR p.proname ILIKE 'fechar_venda%' " +
+                "   OR p.proname ILIKE 'registrar_pagamento_venda%' " +
                 "ORDER BY 1;")
             .ToListAsync();
 
@@ -200,7 +220,7 @@ public class VendasController : ControllerBase
     // VENDAS
     // =========================
 
-    // ✅ GET api/vendas  (Histórico)
+    // GET api/vendas
     [HttpGet]
     public async Task<IActionResult> ListarVendas()
     {
@@ -214,10 +234,12 @@ public class VendasController : ControllerBase
                     DataVenda = v.DataVenda,
                     Total = v.Total,
                     Status = v.Status,
-                    ClienteNome = _context.Clientes
-                        .Where(c => c.Id == v.ClienteId)
-                        .Select(c => c.Nome)
-                        .FirstOrDefault()
+                    ClienteNome = v.ClienteId != null
+                        ? _context.Clientes
+                            .Where(c => c.Id == v.ClienteId)
+                            .Select(c => c.Nome)
+                            .FirstOrDefault()
+                        : null
                 })
                 .ToListAsync();
 
@@ -233,27 +255,41 @@ public class VendasController : ControllerBase
     }
 
     // POST api/vendas/abrir
-    // Body: { "clienteId": 1 }
     [HttpPost("abrir")]
     public async Task<IActionResult> AbrirVenda([FromBody] AbrirVendaDto dto)
     {
-        if (dto == null || dto.ClienteId <= 0)
-            return BadRequest(new ErrorResponseDto { Message = "Informe um clienteId válido." });
-
         try
         {
-            var vendaId = await _context.Database
-                .SqlQueryRaw<int>(
-                    "SELECT public.abrir_venda_api({0}) AS \"Value\"",
-                    dto.ClienteId
-                )
-                .SingleAsync();
+            if (dto == null)
+                return BadRequest(new ErrorResponseDto
+                {
+                    Message = "Dados inválidos."
+                });
 
-            return Ok(new { vendaId });
+            var venda = new Venda
+            {
+                ClienteId = dto.ClienteId > 0 ? dto.ClienteId : null,
+                CaixaId = null,
+                DataVenda = DateTime.UtcNow,
+                Subtotal = 0m,
+                Desconto = 0m,
+                Total = 0m,
+                Status = "RASCUNHO",
+                DataFechamento = null,
+                Observacao = null
+            };
+
+            _context.Vendas.Add(venda);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { vendaId = venda.Id });
         }
-        catch (PostgresException ex)
+        catch (Exception ex)
         {
-            return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[ABRIR_VENDA] Erro: " + ex.Message
+            });
         }
     }
 
@@ -262,7 +298,10 @@ public class VendasController : ControllerBase
     public async Task<IActionResult> AdicionarItem(int vendaId, [FromBody] VendaItemCreateDto dto)
     {
         if (dto == null || dto.ProdutoId <= 0 || dto.Quantidade <= 0)
-            return BadRequest(new ErrorResponseDto { Message = "ProdutoId e Quantidade devem ser válidos." });
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "ProdutoId e Quantidade devem ser válidos."
+            });
 
         try
         {
@@ -273,11 +312,36 @@ public class VendasController : ControllerBase
                 dto.Quantidade
             );
 
+            var venda = await _context.Vendas.FindAsync(vendaId);
+            if (venda != null)
+            {
+                var subtotal = await _context.ItensVenda
+                    .Where(i => i.VendaId == vendaId)
+                    .Select(i => i.Subtotal)
+                    .SumAsync();
+
+                venda.Subtotal = subtotal;
+
+                var total = subtotal - venda.Desconto;
+                if (total < 0) total = 0m;
+
+                venda.Total = total;
+
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new { message = "Item adicionado com sucesso" });
         }
         catch (PostgresException ex)
         {
             return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[ADICIONAR_ITEM] Erro: " + ex.Message
+            });
         }
     }
 
@@ -291,6 +355,8 @@ public class VendasController : ControllerBase
             {
                 v.Id,
                 v.Status,
+                v.Subtotal,
+                v.Desconto,
                 v.Total
             })
             .FirstOrDefaultAsync();
@@ -310,7 +376,7 @@ public class VendasController : ControllerBase
                     ProdutoNome = p.Nome,
                     Quantidade = i.Quantidade,
                     PrecoUnitario = i.PrecoUnitario,
-                    Subtotal = i.Quantidade * i.PrecoUnitario
+                    Subtotal = i.Subtotal
                 }
             )
             .ToListAsync();
@@ -319,6 +385,8 @@ public class VendasController : ControllerBase
         {
             Id = vendaBase.Id,
             Status = vendaBase.Status,
+            Subtotal = vendaBase.Subtotal,
+            Desconto = vendaBase.Desconto,
             Total = vendaBase.Total,
             Itens = itens
         };
@@ -337,11 +405,18 @@ public class VendasController : ControllerBase
                 id
             );
 
-            return Ok(new { message = "Venda fechada com sucesso" });
+            return Ok(new { message = "Venda finalizada com sucesso" });
         }
         catch (PostgresException ex)
         {
             return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[FECHAR_VENDA] Erro: " + ex.Message
+            });
         }
     }
 
@@ -350,7 +425,10 @@ public class VendasController : ControllerBase
     public async Task<IActionResult> Pagar(int id, [FromBody] PagamentoCreateDto dto)
     {
         if (!ModelState.IsValid)
-            return BadRequest(new ErrorResponseDto { Message = "Dados de pagamento inválidos." });
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Dados de pagamento inválidos."
+            });
 
         try
         {
@@ -366,6 +444,13 @@ public class VendasController : ControllerBase
         catch (PostgresException ex)
         {
             return BadRequest(new ErrorResponseDto { Message = ex.MessageText });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new ErrorResponseDto
+            {
+                Message = "[PAGAR] Erro: " + ex.Message
+            });
         }
     }
 }

@@ -226,3 +226,11 @@ C:\Users\maria\LojaMae\obj\Debug\net8.0\refint\LojaMae.Api.dll
 C:\Users\maria\LojaMae\obj\Debug\net8.0\LojaMae.Api.pdb
 C:\Users\maria\LojaMae\obj\Debug\net8.0\LojaMae.Api.genruntimeconfig.cache
 C:\Users\maria\LojaMae\obj\Debug\net8.0\ref\LojaMae.Api.dll
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\build\8eb7356e8048c674615db6e5404786d8\dart_build_result.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\build\8eb7356e8048c674615db6e5404786d8\outputs.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\build\flutter_assets\AssetManifest.bin.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\build\flutter_assets\FontManifest.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\ios\Runner\Assets.xcassets\AppIcon.appiconset\Contents.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\ios\Runner\Assets.xcassets\LaunchImage.imageset\Contents.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\macos\Runner\Assets.xcassets\AppIcon.appiconset\Contents.json
+C:\Users\maria\LojaMae\bin\Debug\net8.0\lojamae_front_novo\web\manifest.json
